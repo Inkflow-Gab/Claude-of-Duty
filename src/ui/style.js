@@ -699,7 +699,23 @@ const CSS = `
 /*  were literally unreachable. Everything below fixes the three real problems: */
 /*  it scrolls, it is full-width, and its controls are thumb-sized.            */
 /* ────────────────────────────────────────────────────────────────────────── */
-.ow-menu-touch { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+/*
+  The ONE place on the page that is allowed to scroll, and it has to opt back in
+  explicitly. index.html sets touch-action:none on the body to stop a drag
+  becoming a page scroll, which on Android also means Chrome offering
+  pull-to-refresh and reloading the game mid-fight. Without pan-y here the
+  settings menu would be unscrollable on a phone with a short viewport, which is
+  precisely the case that needs it.
+
+  (Written without backticks on purpose: this block is inside a template
+  literal, and a stray backtick silently terminates the string.)
+*/
+.ow-menu-touch {
+  overflow-y: auto;
+  overscroll-behavior: contain; /* not "none": a scroll here must not chain */
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
 .ow-menu-touch .ow-menu-inner {
   /* Full width with a safe gutter: the column is gone, because a 430 px fixed
      column is 100%+ of a landscape phone's usable width once padding is taken. */

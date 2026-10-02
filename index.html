@@ -4,12 +4,55 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <title>BLACK OF DUTY — Tactical Operations</title>
+    <!--
+      MOBILE PAGE BEHAVIOUR — every line here exists to stop a phone from
+      fighting the game, and each one was a real bug before it was set.
+
+      overscroll-behavior:none is the important one. On Android, swiping down on
+      a full-height page overscrolls the viewport and Chrome will happily reload
+      the page — silently discarding the session mid-fight. A game that reloads
+      when the player pulls their thumb is broken in a way no amount of frame rate
+      fixes.
+
+      touch-action:none on the document, with the two exceptions below, so a
+      drag is a look-drag and never a scroll. The controls set `touch-action`
+      themselves where they need it.
+
+      user-select:none and the highlight colour stop a long-press turning into a
+      text selection or a blue flash over the HUD.
+    -->
+    <meta name="theme-color" content="#07090b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style>
       :root { color-scheme: dark; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-      body { font-family: "Inter", "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+      /*
+        `overflow: hidden` alone is not enough on Android — the document still
+        overscrolls and still offers pull-to-refresh. `overscroll-behavior:
+        none` on BOTH html and body is what actually stops it, and
+        `position: fixed` on body means there is no scrollable overflow to
+        reveal in the first place.
+      */
+      html, body {
+        width: 100%; height: 100%; overflow: hidden; background: #000;
+        overscroll-behavior: none; position: fixed; inset: 0;
+      }
+      body {
+        font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none; -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: none;
+      }
       #game { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: none; }
+      /*
+        The settings menu is the one element that genuinely needs to scroll, and
+        is the one place a touch drag must be allowed to pan. It opts back in with
+        `touch-action: pan-y` in style.js (`.ow-menu-touch`).
+      */
     </style>
   </head>
   <body>

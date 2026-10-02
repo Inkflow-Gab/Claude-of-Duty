@@ -775,8 +775,8 @@ section('Boot cost');
   // position:fixed leftover swallows taps, which on a touch device is an
   // invisible dead zone over the canvas.
   const { MAIN_SRC } = await import('./__probe_sources.mjs');
-  ok(/const boot = capture \? null : new BootProgress\(\)/.test(MAIN_SRC),
-    'the boot overlay is nulled in capture mode');
+  ok(/const boot = capture \? null : new LoadingScreen\(\)/.test(MAIN_SRC),
+    'the loading screen is nulled in capture mode');
   ok(MAIN_SRC.includes('boot?.dispose()'), 'a failed boot tears the overlay down');
   const bootSrc = readFileSync(join(here, 'core', 'boot.js'), 'utf8');
   ok(bootSrc.includes('el.remove()'), 'the overlay is removed from the DOM, not just hidden');

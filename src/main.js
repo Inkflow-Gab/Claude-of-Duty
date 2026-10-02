@@ -18,7 +18,7 @@ import { prewarm } from './core/prewarm.js';
 import { Settings } from './core/settings.js';
 import { GAME_TITLE, GAME_SUBTITLE } from './core/config.js';
 import { installErrorTrap, runDiagnostics } from './core/diagnostics.js';
-import { BootProgress } from './core/boot.js';
+import { LoadingScreen } from './core/boot.js';
 
 const params = new URLSearchParams(location.search);
 const capture = params.get('capture') === '1';
@@ -172,6 +172,53 @@ if (config.touch && !capture) {
   engine.input.onFirstTouch = () => touch.setEnabled(true);
 
   /**
+   * LANDSCAPE LOCK + FULLSCREEN.
+   *
+   * The game is landscape-only by design: a portrait HUD has nowhere to put the
+   * ammo panel, the compass and the touch control clusters. The portrait hint in
+   * `core/touch.js` is a courtesy, not the solution.
+   *
+   * `screen.orientation.lock` is the right API and works in Chrome for Android,
+   * but it only takes effect from a FULLSCREEN context — so the two must be done
+   * together, in this order, and both need a user gesture. A touch device has no
+   * keyboard shortcut for that, so the first tap anywhere supplies the gesture.
+   *
+   * Every failure is swallowed, and deliberately. iOS has no orientation API at
+   * all from the web and refuses fullscreen outside Safari; a browser that
+   * rejects either must still get a working game, because neither is load-
+   * bearing for play — they are quality of life. The APK wrapper is where the
+   * landscape lock is actually enforced unconditionally (see the manifest).
+   *
+   * `once: false` with a latch rather than `{ once: true }`, because the handler
+   * must survive a first tap that arrives before the touch layer is enabled — a
+   * touch already down at boot, say — and a missed gesture would never be retried.
+   */
+  let fsTried = false;
+  addEventListener(
+    'pointerdown',
+    () => {
+      if (fsTried) return;
+      fsTried = true;
+      const el = document.documentElement;
+      try {
+        // The options form is the modern signature; the bare one is the only
+        // thing older WebKit implements, and that is what iOS Safari has.
+        const req = el.requestFullscreen?.({ navigationUI: 'hide' }) ?? el.webkitRequestFullscreen?.();
+        if (req && typeof req.catch === 'function') req.catch(() => {});
+      } catch {
+        /* refused without a gesture, or unsupported. Carrying on. */
+      }
+      try {
+        const p = screen.orientation?.lock?.('landscape');
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch {
+        /* iOS, or a desktop browser. Harmless. */
+      }
+    },
+    { passive: true }
+  );
+
+  /**
    * ROTATION AND RESIZE — the part that is easy to get wrong.
    *
    * `orientationchange` alone is not enough, for three separate reasons:
@@ -259,7 +306,7 @@ engine
  * either way, but there is no reason to touch a subsystem's identity in a run
  * whose whole job is to be reproducible.
  */
-const boot = capture ? null : new BootProgress();
+const boot = capture ? null : new LoadingScreen();
 if (boot) {
   /**
    * Relative cost per subsystem, keyed by id. Missing ids default to a small
@@ -294,7 +341,9 @@ if (boot) {
   };
   // One extra step for the prewarm pass that follows init.
   const ids = engine.registry.resolve().map((s) => s.constructor.id);
-  boot.configure([...(ids.map((id) => WEIGHT[id] ?? 0.01)), 0.2]);
+  const weights = [...ids.map((id) => WEIGHT[id] ?? 0.01), 0.2];
+  const labels = [...ids.map((id) => LABEL[id] ?? id), 'compiling shaders', 'ready'];
+  boot.configure(labels, weights);
   let step = 0;
   for (const sys of engine.registry.ordered) {
     const id = sys.constructor.id;
@@ -355,7 +404,7 @@ const shotApi = installShotApi(engine, { capture, lockstep });
  * to happen — it is exactly what stops multi-second stalls mid-fight — so the only
  * thing to be done about it is to be honest while it happens.
  */
-boot?.set(boot._weights.length - 1, 'compiling shaders');
+boot?.set(boot.i + 1, 'compiling shaders');
 const warmup = params.get('prewarm') === '0' ? { ok: false, reason: 'disabled by ?prewarm=0' } : await prewarm(engine);
 console.info('[boot] prewarm', warmup);
 window.__PREWARM__ = warmup;
@@ -370,7 +419,7 @@ engine.start();
  * canvas for a frame — the exact thing the overlay exists to prevent. Cleared
  * alongside the ready handshake below, which is already frame-counted.
  */
-boot?.set(boot._weights.length - 1, 'ready');
+boot?.set(boot.i + 1, 'ready');
 
 // Capture harness handshake: only flag ready once a frame has actually landed.
 //

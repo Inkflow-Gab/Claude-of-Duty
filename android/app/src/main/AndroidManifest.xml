@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      NO PERMISSIONS ARE DECLARED, and that is deliberate.
+
+      The game is entirely offline: `dist/` ships inside the APK and every
+      texture, mesh, material and sound is generated in code at load time. There
+      is nothing to fetch, so there is nothing to ask permission for. In
+      particular there is no `INTERNET` — a WebGL game that needs no network
+      should not ship with network access, and leaving it out means the APK
+      cannot phone home even if the page were modified to try.
+
+      This is also why the wrapper must serve the BUNDLED assets rather than
+      pointing at the github.io URL: that would require `INTERNET`, and would
+      hand the game a live network origin to load scripts from.
+    -->
+
+    <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!--
+          hardwareAccelerated is REQUIRED for a WebGL game and is on by default
+          from API 11, so this line is documentation rather than a change. It is
+          written out anyway because a device or OEM image that disables it
+          produces a completely black screen with no error in the log, and having
+          it stated here means the cause is greppable.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:hardwareAccelerated="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|density|fontScale"
+            android:theme="@style/AppTheme.NoActionBarLaunch">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The splash. Without one, Android shows a white flash before the page
+          paints, and the page's own loading screen is dark — so a white flash
+          followed by black reads as two separate problems.
+
+          The windowBackground is #07090b, which is the exact background the
+          in-page loading screen uses, so the handoff is seamless: the system
+          splash, the WebView's first paint, and the loading screen are the same
+          colour, and there is nothing to see transition.
+        -->
+        <meta-data android:name="android.app.splash" android:resource="@drawable/splash" />
+    </application>
+</manifest>
