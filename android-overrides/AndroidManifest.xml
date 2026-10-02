@@ -19,12 +19,24 @@
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"
-        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+
+        <!--
+          There is deliberately NO android:dataExtractionRules attribute here.
+          With allowBackup=false and fullBackupContent=false, Android 12+'s data
+          extraction rules are never consulted, and the Capacitor template no
+          longer ships res/xml/data_extraction_rules.xml — so writing the
+          attribute is not only pointless, it fails the build with
+
+              AAPT: error: resource xml/data_extraction_rules not found
+
+          If M-android-backup support is ever added back, both the attribute and
+          the missing resource come together, or the build is this exact error.
+        -->
 
         <!--
           hardwareAccelerated is REQUIRED for a WebGL game and is on by default

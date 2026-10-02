@@ -57,6 +57,17 @@ jobs:
           # uncached, which costs a few seconds and is the correct trade for a
           # wrapper that builds at most a handful of times.
 
+      # Capacitor 7's Android template sets source/target compatibility to 21,
+      # and the runner's default javac is 17. Without this step the build dies
+      # with `error: invalid source release: 21` after several minutes of
+      # compiling — the most expensive and least informative failure in this
+      # whole workflow, because it surfaces as a javac flag problem, not as a
+      # JDK problem.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       # The game. Public repository, so no token is needed and this workflow
       # cannot write to it — it only ever reads.
       - name: Check out the game
@@ -101,7 +112,17 @@ jobs:
           bash build-apk.sh
 
       - name: Build the debug APK
-        working-directory: android
+        # `game/android`, not `android`. build-apk.sh cd's into the cloned game
+        # directory to run the Capacitor CLI — the CLI resolves the project root
+        # from the working directory and has no flag to override it — so the
+        # generated project lands under `game/`. The first run of this step
+        # pointed at `android`, which does not exist, and GitHub reported it as
+        #
+        #   An error occurred trying to start process '/usr/bin/bash' with
+        #   working directory '.../android'. No such file or directory
+        #
+        # which reads like the build broke rather than like the path was wrong.
+        working-directory: game/android
         run: |
           # A debug build is signed with the SDK's auto-generated debug keystore,
           # so it installs on a real device. A release build needs a signing key
@@ -112,7 +133,8 @@ jobs:
       - name: Locate the APK
         id: apk
         run: |
-          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          # Same `game/` prefix as the step above, for the same reason.
+          APK=$(find game/android/app/build/outputs/apk -name '*.apk' | head -1)
           test -n "$APK" || { echo "no APK produced"; exit 1; }
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "size=$(du -h "$APK" | cut -f1)"

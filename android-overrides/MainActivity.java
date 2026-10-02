@@ -3,7 +3,8 @@ package com.blackofduty.game;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
-import androidx.activity.EdgeToEdge;
+
+import com.getcapacitor.BridgeActivity;
 
 /**
  * The whole native surface of the game.
