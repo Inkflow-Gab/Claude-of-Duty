@@ -227,6 +227,40 @@ export const SKINS = {
     band: { color: 0xffd98a, intensity: 0.85, speed: 0.19, tiles: 4 },
     desc: 'Polished gold with a travelling highlight.',
   },
+
+  /**
+   * FOREST GREEN — the colour family the range was missing until now (black,
+   * sand, arctic grey, urban camo and blue existed; green did not). A dark
+   * satin anodise with the furniture a shade deeper, so the receiver reads
+   * lighter than the stock — the same inversion trick `arctic` uses.
+   */
+  verdant: {
+    id: 'verdant',
+    label: 'Forest Green',
+    mats: {
+      alu: 'alu_verdant',
+      alu_fine: 'alu_verdant_fine',
+      polymer: 'polymer_verdant',
+    },
+    desc: 'Satin forest green anodise.',
+  },
+
+  /**
+   * ASH — pale gunmetal sanded down to bare bright metal. The wear showcase of
+   * the range and the looking-glass of the others: where cobalt is dark and
+   * clean, ash is light and beaten. Highest wear amplitude and the brightest
+   * wear colour in the set, on a receiver already lighter than any other skin.
+   */
+  ash: {
+    id: 'ash',
+    label: 'Battle-Worn Ash',
+    mats: {
+      alu: 'alu_ash',
+      alu_fine: 'alu_ash_fine',
+      polymer: 'polymer_ash',
+    },
+    desc: 'Pale gunmetal, sanded to bright wear.',
+  },
 };
 
 /** Skin ids in menu order. `issue` first — it is the shipped look. */

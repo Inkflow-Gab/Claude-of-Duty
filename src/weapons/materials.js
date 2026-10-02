@@ -1162,6 +1162,107 @@ Object.assign(WEAPON_MATERIALS, {
     grimeColor: 0x070a10,
   }),
 
+  /* ------------------------------------------------- verdant (forest green) */
+  /**
+   * FOREST GREEN — the colour family the skin range was missing. The stocks
+   * cover black, sand, arctic grey, urban camo and blue; military-issue green
+   * was the gap. A dark satin anodise, held to the crushed-albedo discipline
+   * (channel values ~1/3 physical, well under cobalt's 0.36 stress-test peak)
+   * so it reads as green on the 20x viewmodel rig rather than as a pale blob.
+   */
+  alu_verdant: SKIN('rubber', {
+    bake: { size: 1024, seed: 9405, relief: 0.005 },
+    scale: 0.095,
+    tint: c(0.055, 0.115, 0.068),
+    roughness: [0.58, 0.08, 0.26],
+    three: { physical: true, specularIntensity: 0.1 },
+    normalStrength: 1.5,
+    detail: [22, 1.2, 0.72, 5],
+    wear: [0.14, 0.6, 0.5, 0],
+    wearColor: 0x474f48,
+    wearMaterial: [0.5, 0.85, 0, 0.8],
+    grimeColor: 0x070a07,
+  }),
+
+  alu_verdant_fine: SKIN('rubber', {
+    bake: { size: 1024, seed: 9406, relief: 0.0025 },
+    scale: 0.038,
+    tint: c(0.031, 0.064, 0.037),
+    roughness: [0.5, 0.07, 0.26],
+    three: { physical: true, specularIntensity: 0.07 },
+    normalStrength: 1.1,
+    detail: [30, 0.85, 0.58, 4],
+    wear: [0.12, 0.5, 0.5, 0],
+    wearColor: 0x4c544d,
+    wearMaterial: [0.46, 0.85, 0, 0.75],
+    grimeColor: 0x070a07,
+  }),
+
+  polymer_verdant: SKIN('rubber', {
+    bake: { size: 1024, seed: 9407, relief: 0.009 },
+    scale: 0.055,
+    tint: c(0.05, 0.088, 0.058),
+    roughness: [0.68, 0.14, 0.3],
+    normalStrength: 1.5,
+    detail: [26, 1.1, 0.55, 6],
+    wear: [0.2, 0.6, 0.5, 0],
+    wearColor: 0x3c433c,
+    wearMaterial: [0.46, 0, 0, 0.5],
+    grimeColor: 0x070a07,
+    three: { physical: true, specularIntensity: 0.13 },
+  }),
+
+  /* -------------------------------------------------- ash (battle-worn) */
+  /**
+   * ASH — pale gunmetal, the wear showcase of the range. The receiver sits at
+   * the LIGHTEST end of the skin family (a mid-grey is as far as this rig can
+   * go before the 20x viewmodel irradiance blows a metal out), and it carries
+   * the highest `wear` amplitude and brightest `wearColor` in the library, so
+   * it reads as a beater that has been carried rather than as a repaint.
+   */
+
+  alu_ash: SKIN('rubber', {
+    bake: { size: 1024, seed: 9411, relief: 0.004 },
+    scale: 0.09,
+    tint: c(0.2, 0.212, 0.224),
+    roughness: [0.46, 0.09, 0.3],
+    three: { physical: true, specularIntensity: 0.16 },
+    normalStrength: 1.6,
+    detail: [22, 1.2, 0.72, 5],
+    wear: [0.22, 0.72, 0.55, 0.05],
+    wearColor: 0xdfe5ea,
+    wearMaterial: [0.56, 0.92, 0, 0.85],
+    grimeColor: 0x0a0c0e,
+  }),
+
+  alu_ash_fine: SKIN('rubber', {
+    bake: { size: 1024, seed: 9412, relief: 0.002 },
+    scale: 0.036,
+    tint: c(0.11, 0.117, 0.124),
+    roughness: [0.42, 0.07, 0.3],
+    three: { physical: true, specularIntensity: 0.12 },
+    normalStrength: 1.2,
+    detail: [30, 0.85, 0.58, 4],
+    wear: [0.18, 0.66, 0.55, 0.04],
+    wearColor: 0xe4e9ee,
+    wearMaterial: [0.52, 0.92, 0, 0.8],
+    grimeColor: 0x0a0c0e,
+  }),
+
+  polymer_ash: SKIN('rubber', {
+    bake: { size: 1024, seed: 9413, relief: 0.009 },
+    scale: 0.055,
+    tint: c(0.12, 0.125, 0.132),
+    roughness: [0.62, 0.14, 0.32],
+    normalStrength: 1.5,
+    detail: [26, 1.1, 0.55, 6],
+    wear: [0.26, 0.66, 0.55, 0.05],
+    wearColor: 0xaab2b9,
+    wearMaterial: [0.46, 0.1, 0, 0.5],
+    grimeColor: 0x0a0c0e,
+    three: { physical: true, specularIntensity: 0.13 },
+  }),
+
   /* ------------------------------------------------- live-effect finishes */
   /**
    * REACTIVE — the first skin that ANIMATES.

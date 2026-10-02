@@ -17,6 +17,25 @@ import { CombatDemo } from './demo.js';
 const MAX_BLIPS = 48;
 
 /**
+ * Touch feedback via the Vibration API — the one form of "juice" that phones
+ * have and desktops do not. Deliberately NOT part of the render: it feeds no
+ * pixel, so the capture gate is untouched, it reads no clock and no rng, and
+ * in the capture Chromium (or any WebView without gesture focus) `vibrate` is
+ * a silent no-op or a throw — both handled. Desktop browsers mostly lack the
+ * API, so this is self-gating to phones by construction.
+ */
+const canVibrate =
+  typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+function buzz(pattern) {
+  if (!canVibrate) return;
+  try {
+    navigator.vibrate(pattern);
+  } catch {
+    // Sandboxed or old WebViews throw here; haptics are best-effort by nature.
+  }
+}
+
+/**
  * ===========================================================================
  * HUD / UI subsystem
  * ===========================================================================
@@ -192,6 +211,9 @@ export class UiSystem {
       if (this._isPlayerTarget(e.target)) return;
       const kind = e.killed ? 'kill' : e.headshot ? 'head' : e.armour ? 'armour' : 'hit';
       this.hitmarker(kind);
+      // Kill feedback in the hand too: a short double-buzz reads as a
+      // confirmation, single ticks as the rounds connecting. Fixed patterns.
+      buzz(e.killed ? [24, 45, 70] : e.headshot ? 14 : e.armour ? 18 : 10);
       if (e.point) {
         this.damageNumber(
           e.point,
@@ -349,6 +371,8 @@ export class UiSystem {
     this._regenTimer = 0;
     this.state.regen = false;
     this.sfx('player_hurt', 0.6 + i * 0.4);
+    // Single short buzz when the player takes damage — strength follows size.
+    buzz(i > 0.75 ? [30, 35, 60] : 24);
   }
 
   setPrompt(p) {
