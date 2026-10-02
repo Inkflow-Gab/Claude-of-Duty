@@ -1,0 +1,110 @@
+# GitHub Pages deploy.
+#
+# WHY PAGES AND NOT RAILWAY. This is a static site — `vite build` emits `dist/`
+# and there is no backend, no database and no API. Railway is a container host
+# that bills for compute by the hour, so deploying here would mean paying to run
+# a Node process whose only job is to hand over static files. Pages is free and
+# is the same build output.
+#
+# Free Pages requires a PUBLIC repository. A private one needs a paid plan; if
+# this ever needs to be private, switch the build job to Cloudflare Pages or
+# Netlify, which both have free private tiers and take the same `dist/`.
+#
+# THE ONE THING THAT BREAKS IF YOU GET IT WRONG
+# -------------------------------------------
+# `BASE_PATH`. A GitHub Pages project site is served from
+# https://<user>.github.io/<repo>/, not from the domain root, so a bundle built
+# with the default base of `/` emits /assets/index-*.js — a URL that 404s,
+# because there is nothing at the domain root. The page loads, the script never
+# arrives, and the screen is black with nothing useful in the console.
+#
+# `BASE_PATH` is set from the repository name at build time, which means renaming
+# the repo cannot break the deploy. If you later attach a custom domain, set
+# BASE_PATH to a single slash here and the same build works at the root.
+#
+# THE OTHER THING WORTH KNOWING
+# -----------------------------
+# This workflow is also the first time `npm run build` has ever run against this
+# codebase on real hardware. The development sandbox could not load rollup's
+# native binding, so the production build has never been executed — only parsed
+# and bundled with esbuild. Treat a red first run as a real finding, not as a
+# CI config problem.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Lets a deploy be re-run from the Actions tab without pushing a commit, which
+  # is the first thing you want when the failure is "the build broke" and you do
+  # not want to fabricate a change to test it.
+  workflow_dispatch:
+
+# Least privilege. `pages: write` and `id-token: write` are both required by the
+# Pages deployment action; `contents: read` is all the build needs. There is
+# deliberately no `contents: write` — this workflow must never be able to push
+# code back to the repository.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. Without this, two rapid pushes race to publish and the
+# older one can win, leaving the live site a commit behind the repository.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        env:
+          # See the header. Without this the deploy is a black screen.
+          BASE_PATH: '/${{ github.event.repository.name }}/'
+        run: npm run build
+
+      # Fails the deploy if `dist/` is missing or empty. A silently-skipped build
+      # step is how you end up publishing a 404 page over a working site.
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || { echo "dist/index.html missing — build produced nothing"; exit 1; }
+          echo "dist/index.html OK ($(wc -c < dist/index.html) bytes)"
+
+      - name: Check the bundle references the subpath, not the domain root
+        run: |
+          # If base were wrong, the built HTML would reference /assets/ instead of
+          # /<repo>/assets/. Catch that here rather than in a browser.
+          if grep -qE '(src|href)="/assets/' dist/index.html; then
+            echo "ERROR: index.html references /assets/ at the domain root."
+            echo "BASE_PATH is not being applied — a GitHub Pages project site is served from a subpath."
+            exit 1
+          fi
+          echo "asset paths are correctly relative to the repo subpath"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
