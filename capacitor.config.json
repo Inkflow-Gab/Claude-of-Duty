@@ -1,0 +1,11 @@
+{
+  "appId": "com.blackofduty.game",
+  "appName": "Black of Duty",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The launcher name. Defined here rather than left to Capacitor's default so
+      it matches config.title in src/core/config.js — the same "one source of
+      truth" rule that keeps the pause menu and the document title from drifting.
+    -->
+    <string name="app_name">Black of Duty</string>
+    <string name="title_activity_main">Black of Duty</string>
+    <string name="package_name">com.blackofduty.game</string>
+    <string name="custom_url_scheme">com.blackofduty.game</string>
+</resources>

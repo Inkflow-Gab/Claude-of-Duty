@@ -1,0 +1,141 @@
+name: Build APK
+
+# WHY THIS IS A SEPARATE REPOSITORY
+#
+# The APK is a build artefact, not source. Keeping it in the game repo would mean
+# two sources of truth for the same code and a commit that changes both the game
+# and its wrapper. Here, the wrapper is built against the game repository as an
+# external input: one source of truth, and the APK can only ever lag or match it.
+#
+# This repo contains no game code at all. It is the wrapper, the patches applied
+# to the generated Android project, and this workflow.
+
+on:
+  # The game moved, so the APK is out of date. Rebuilding on every game commit
+  # would burn minutes of CI for a change that is often a comment.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Game branch or commit to wrap
+        required: false
+        default: main
+  push:
+    paths:
+      - 'capacitor.config.ts'
+      - 'android-overrides/**'
+      - '.github/workflows/build-apk.yml'
+      - 'build-apk.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    env:
+      # A single slash. Set here, at the job level, rather than inside the run
+      # block: a `FOO=bar` assignment must directly prefix the command it
+      # configures, and keeping it at the env block is the one form that cannot
+      # be mistyped into a YAML key — which is how the last attempt died with
+      # "BASE_PATH:: command not found".
+      BASE_PATH: '/'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # NO `cache: npm` HERE. This repository has no package.json and no
+          # lockfile — the game does, and its install runs in a subdirectory
+          # after this step. `cache: npm` keys off a lockfile in the repository
+          # ROOT and fails the whole job with "Dependencies lock file is not
+          # found" before a single useful line runs. The game's own `npm ci` is
+          # uncached, which costs a few seconds and is the correct trade for a
+          # wrapper that builds at most a handful of times.
+
+      # The game. Public repository, so no token is needed and this workflow
+      # cannot write to it — it only ever reads.
+      - name: Check out the game
+        run: |
+          git clone --depth 1 --branch "${{ github.event.inputs.ref || 'main' }}" \
+            https://github.com/Inkflow-Gab/Claude-of-Duty.git game
+          echo "game commit: $(git -C game rev-parse --short HEAD)"
+
+      - name: Build the game
+        working-directory: game
+        run: |
+          npm ci
+          NODE_ENV=production npx vite build
+          test -f dist/index.html || { echo "dist/index.html missing"; exit 1; }
+
+      - name: Report what we wrapped
+        run: |
+          cd game
+          echo "bundle: $(du -h dist/assets/*.js | tail -1)"
+          echo "files:  $(find dist -type f | wc -l)"
+
+      # The Android toolchain is pre-installed on ubuntu-latest: JDK 17, the
+      # Android SDK, and a Gradle cache. The development sandbox could not do
+      # this — it has no SDK at all — which is the entire reason this build runs
+      # here rather than locally.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Note: no android-actions/setup-android step. ubuntu-latest already
+      # carries the Android SDK at /usr/local/lib/android/sdk with licenses
+      # accepted, and setup-android@v3 additionally tries to install the `tools`
+      # and `platform-tools` packages by their stock names — the `tools` package
+      # no longer exists in Google's repository, so the action dies with
+      # "Failed to find package 'tools'" and takes every step after it with it.
+      # It is also doing the doomed and redundant thing of downloading a newer
+      # cmdline-tools over the preinstalled one. Leaving the preinstalled SDK in
+      # place works, and the scaffolding step that matters — exposing ANDROID_SDK
+      # ROOT and licences — is done by the image itself.
+
+      - name: Generate the Android project and apply our patches
+        run: |
+          bash build-apk.sh
+
+      - name: Build the debug APK
+        working-directory: android
+        run: |
+          # A debug build is signed with the SDK's auto-generated debug keystore,
+          # so it installs on a real device. A release build needs a signing key
+          # that must not live in a repository, which is why this does not attempt
+          # one.
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Locate the APK
+        id: apk
+        run: |
+          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          test -n "$APK" || { echo "no APK produced"; exit 1; }
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "size=$(du -h "$APK" | cut -f1)"
+          ls -la "$APK"
+
+      # An APK nobody can get hold of is not a build. The artefact is the
+      # deliverable — it is downloadable from the Actions run for 90 days, and a
+      # tagged release makes it permanent.
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: black-of-duty-debug-apk
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Summary
+        run: |
+          {
+            echo "### APK built"
+            echo
+            echo "- game commit: \`$(git -C game rev-parse --short HEAD)\`"
+            echo "- apk: \`${{ steps.apk.outputs.path }}\` (${{ steps.apk.outputs.size }})"
+            echo
+            echo "Download it from the Artifacts section of this run."
+          } >> "$GITHUB_STEP_SUMMARY"
