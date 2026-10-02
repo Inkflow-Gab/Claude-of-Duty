@@ -654,6 +654,77 @@ section('Kill and death effects');
   ok(SKINS_SRC.includes('EFFECT'), 'the skin effect contract is documented in skins.js');
 }
 
+/* -------------------------------------------------- init-order robustness -- */
+section('Subsystem init order');
+
+{
+  /**
+   * The bug that made the deployed site black.
+   *
+   * `weapons.init()` pushed onto `this._off` a few lines BEFORE assigning
+   * `this._off = []`, so every boot died with "Cannot read properties of
+   * undefined (reading 'push')" and the page showed nothing. It passed a syntax
+   * check, it passed a bundle, and it passed every other assertion in this file.
+   *
+   * Nothing catches an ordering mistake like that statically, but the specific
+   * shape is greppable: an array that is pushed to and never assigned anywhere
+   * in the same file. That is a real defect, and this is the guard for it.
+   *
+   * The check is deliberately narrow — it only fires on a name that is pushed
+   * to and has NO assignment of the form `this.X =` anywhere in the file. A
+   * class field (`X = []`) satisfies it too, so a correctly-written field is not
+   * flagged; anything it DOES flag has genuinely lost its initialiser.
+   */
+  const { readdirSync: rd, statSync: st } = await import('node:fs');
+  const files = [];
+  (function walk(d) {
+    for (const e of rd(d)) {
+      const p = join(d, e);
+      if (st(p).isDirectory()) walk(p);
+      else if (p.endsWith('.js')) files.push(p);
+    }
+  })(join(here, ''));
+
+  const offenders = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    // Strip comments so a `.push(` inside a doc block cannot be miscounted.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const pushed = new Set();
+    for (const m of code.matchAll(/this\.([A-Za-z_$][\w$]*)\.push\(/g)) pushed.add(m[1]);
+    for (const name of pushed) {
+      // Any assignment form counts: constructor, init, class field, or a lazy
+      // `??=`. `??=` is a genuine initialiser, not a different bug — it just does
+      // not match a `=`, and narrowing the pattern to `=` flagged it wrongly.
+      const assigned = new RegExp(`this\\.${name}\\s*(=[^=]|\\?\\?=)`).test(code);
+      if (!assigned) offenders.push(`${f.replace(here, '')}: this.${name}`);
+    }
+  }
+  ok(offenders.length === 0, 'no array is pushed to without an initialiser', offenders.join(', '));
+
+  // And the specific regression, named so a future edit cannot quietly undo it.
+  const { WEAPONS_SRC, AI_SRC } = await import('./__probe_sources.mjs');
+  const assignAt = WEAPONS_SRC.indexOf('this._off = []');
+  const pushAt = WEAPONS_SRC.indexOf('this._off.push(');
+  ok(assignAt > 0 && pushAt > assignAt, 'weapons._off is initialised before it is pushed to',
+    `assign@${assignAt} push@${pushAt}`);
+  // dispose() must survive a partially-constructed system.
+  ok(/for \(const off of this\._off \?\? \[\]\)/.test(WEAPONS_SRC),
+    'weapons.dispose tolerates a missing _off');
+
+  // Every subsystem that pushes to an event-unsubscribe list must initialise it,
+  // and the two that were at risk are checked explicitly.
+  for (const [name, src, field] of [
+    ['weapons', WEAPONS_SRC, '_off'],
+    ['ai', AI_SRC, '_off'],
+  ]) {
+    const a = src.indexOf(`this.${field} = []`);
+    const p = src.indexOf(`this.${field}.push(`);
+    ok(a > 0 && p > a, `${name}.${field} initialised before first push`,
+      `assign@${a} push@${p}`);
+  }
+}
+
 /* ------------------------------------------------------------------ done -- */
 console.log(`\n${failures === 0 ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'} ${checks - failures}/${checks} checks`);
 process.exitCode = failures === 0 ? 0 : 1;

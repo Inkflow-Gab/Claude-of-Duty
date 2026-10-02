@@ -283,6 +283,14 @@ export class WeaponSystem {
      * bound by position from this table, so a fifth weapon needs a new binding
      * but no new code path.
      */
+    // Event unsubscribe handles, torn down in dispose(). Initialised HERE and not
+    // in the constructor: this is the first thing that pushes onto it, and the
+    // constructor runs long before the subsystems exist, so a constructor
+    // initialisation would be fine — but the array MUST exist before this push.
+    // It was previously initialised a few lines below these two statements, which
+    // made every boot die with "Cannot read properties of undefined (reading
+    // 'push')" at the exact point the weapons subsystem started.
+    this._off = [];
     this._off.push(
       ctx.events.on('player:land', (e) => this.viewmodel.land(Math.abs(e?.velocity ?? 3)))
     );
