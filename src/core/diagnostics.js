@@ -252,11 +252,16 @@ function toolbar(text) {
   copy.type = 'button';
   copy.style.cssText = BTN;
   copy.textContent = 'COPY THE ERROR — send this to the developer';
-  copy.addEventListener('click', () => {
+  // Mobile WebViews sometimes swallow the first tap on a dynamically-created
+  // button; listen for both click and touchend so the copy actually fires.
+  const doCopy = (e) => {
+    e.preventDefault();
     copyText(text)
       .then(() => (copy.textContent = 'Copied ✓'))
       .catch(() => (copy.textContent = 'Copy failed — long-press the text'));
-  });
+  };
+  copy.addEventListener('click', doCopy);
+  copy.addEventListener('touchend', doCopy);
   const close = document.createElement('button');
   close.type = 'button';
   close.style.cssText = BTN + 'opacity:.85;';
@@ -274,15 +279,23 @@ function toolbar(text) {
  * serves at https://localhost (Capacitor scheme) and the live site is https, so
  * it is there in practice — but an old WebView still gets the textarea +
  * execCommand fallback rather than silence.
+ *
+ * MOBILE FIX: the old fallback positioned the textarea at left:-9999px, which
+ * meant `focus()` was a no-op on Android WebView — the element was outside the
+ * viewport, so execCommand('copy') silently did nothing. The textarea is now
+ * placed at 0,0 with opacity:0 (still invisible, still focusable), and we
+ * listen for `touchend` as well as `click` because some mobile WebViews swallow
+ * the first tap on a button that was just created.
  */
 function copyText(text) {
   const fallback = () => {
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.setAttribute('readonly', '');
-    // Off-screen, but must be focusable and in the DOM for both select() and
-    // execCommand to work in old WebViews.
-    ta.style.cssText = 'position:fixed;left:-9999px;top:0;font-size:14px;';
+    // Visible to the browser's focus system but not to the user. On Android
+    // WebView, an element at left:-9999px cannot be focused, so execCommand
+    // fails silently. opacity:0 at 0,0 is focusable and invisible.
+    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:16px;z-index:-1;';
     document.body.appendChild(ta);
     ta.focus();
     ta.select();
