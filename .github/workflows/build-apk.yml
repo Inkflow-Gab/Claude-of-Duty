@@ -1,30 +1,36 @@
 name: Build APK
 
-# WHY THIS IS A SEPARATE REPOSITORY
+# READ-ONLY, MANUAL ORCHESTRATOR — THE PIPELINE LIVES IN THE WRAPPER REPO
 #
-# The APK is a build artefact, not source. Keeping it in the game repo would mean
-# two sources of truth for the same code and a commit that changes both the game
-# and its wrapper. Here, the wrapper is built against the game repository as an
-# external input: one source of truth, and the APK can only ever lag or match it.
+# The APK pipeline (capacitor config, android-overrides/, the launcher icon and
+# build-apk.sh) is owned by the sibling repository `Inkflow-Gab/black-of-duty-apk`
+# — that is the single source of truth, and an APK built here is built by that
+# repo's own script, cloned fresh on every run so it cannot drift from what the
+# release builds ship.
 #
-# This repo contains no game code at all. It is the wrapper, the patches applied
-# to the generated Android project, and this workflow.
+# This file exists for one reason: so the game repo's Actions page can dispatch
+# an APK build without knowing the wrapper repo exists. It is deliberately
+# `workflow_dispatch` only:
+#
+#   - No push trigger. A mirrored pipeline that auto-runs on game pushes would
+#     burn CI minutes for comment-only commits, and a push trigger here would
+#     rerun the build twice (game repo + wrapper repo) with one result landing
+#     in each Actions tab.
+#   - No mirrored files. An earlier version of this repo carried its own copy of
+#     build-apk.sh + capacitor.config.json; they could not run here (this repo
+#     has no android-overrides/), they failed on every build-apk.sh sync push,
+#     and they drifted from the wrapper. They are gone; the wrapper owns them.
+#
+# `ref` chooses which game commit to wrap — same input, same default, same build
+# as the wrapper repo's workflow.
 
 on:
-  # The game moved, so the APK is out of date. Rebuilding on every game commit
-  # would burn minutes of CI for a change that is often a comment.
   workflow_dispatch:
     inputs:
       ref:
         description: Game branch or commit to wrap
         required: false
         default: main
-  push:
-    paths:
-      - 'capacitor.config.ts'
-      - 'android-overrides/**'
-      - '.github/workflows/build-apk.yml'
-      - 'build-apk.sh'
 
 permissions:
   contents: read
@@ -36,113 +42,60 @@ concurrency:
 jobs:
   build:
     env:
-      # A single slash. Set here, at the job level, rather than inside the run
-      # block: a `FOO=bar` assignment must directly prefix the command it
-      # configures, and keeping it at the env block is the one form that cannot
-      # be mistyped into a YAML key — which is how the last attempt died with
-      # "BASE_PATH:: command not found".
+      # A single slash. The game is built under wrapper/game with this BASE_PATH,
+      # so the bundle never references the Pages subpath; build-apk.sh hard-fails
+      # if it does (inside an APK the assets are served from the root).
       BASE_PATH: '/'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # NO `cache: npm` HERE. This repository has no package.json and no
-          # lockfile — the game does, and its install runs in a subdirectory
-          # after this step. `cache: npm` keys off a lockfile in the repository
-          # ROOT and fails the whole job with "Dependencies lock file is not
-          # found" before a single useful line runs. The game's own `npm ci` is
-          # uncached, which costs a few seconds and is the correct trade for a
-          # wrapper that builds at most a handful of times.
 
-      # Capacitor 7's Android template sets source/target compatibility to 21,
-      # and the runner's default javac is 17. Without this step the build dies
-      # with `error: invalid source release: 21` after several minutes of
-      # compiling — the most expensive and least informative failure in this
-      # whole workflow, because it surfaces as a javac flag problem, not as a
-      # JDK problem.
+      # Capacitor 7's Android template uses source/target compatibility 21; the
+      # runner default is 17. Same JDK the wrapper pipeline pins.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      # The game. Public repository, so no token is needed and this workflow
-      # cannot write to it — it only ever reads.
-      - name: Check out the game
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The wrapper is cloned as our workspace root, and the game goes INSIDE it
+      # as `game/` — the exact layout build-apk.sh expects (its overrides are
+      # referenced as `../android-overrides`, so the script must run from the
+      # wrapper root with the game as a sibling directory).
+      - name: Check out the wrapper pipeline and the game
         run: |
+          git clone --depth 1 https://github.com/Inkflow-Gab/black-of-duty-apk.git wrapper
           git clone --depth 1 --branch "${{ github.event.inputs.ref || 'main' }}" \
-            https://github.com/Inkflow-Gab/Claude-of-Duty.git game
-          echo "game commit: $(git -C game rev-parse --short HEAD)"
+            https://github.com/Inkflow-Gab/Claude-of-Duty.git wrapper/game
+          echo "wrapped game commit: $(git -C wrapper/game rev-parse --short HEAD)"
 
       - name: Build the game
-        working-directory: game
+        working-directory: wrapper/game
         run: |
           npm ci
           NODE_ENV=production npx vite build
           test -f dist/index.html || { echo "dist/index.html missing"; exit 1; }
 
-      - name: Report what we wrapped
-        run: |
-          cd game
-          echo "bundle: $(du -h dist/assets/*.js | tail -1)"
-          echo "files:  $(find dist -type f | wc -l)"
-
-      # The Android toolchain is pre-installed on ubuntu-latest: JDK 17, the
-      # Android SDK, and a Gradle cache. The development sandbox could not do
-      # this — it has no SDK at all — which is the entire reason this build runs
-      # here rather than locally.
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      # Note: no android-actions/setup-android step. ubuntu-latest already
-      # carries the Android SDK at /usr/local/lib/android/sdk with licenses
-      # accepted, and setup-android@v3 additionally tries to install the `tools`
-      # and `platform-tools` packages by their stock names — the `tools` package
-      # no longer exists in Google's repository, so the action dies with
-      # "Failed to find package 'tools'" and takes every step after it with it.
-      # It is also doing the doomed and redundant thing of downloading a newer
-      # cmdline-tools over the preinstalled one. Leaving the preinstalled SDK in
-      # place works, and the scaffolding step that matters — exposing ANDROID_SDK
-      # ROOT and licences — is done by the image itself.
-
-      - name: Generate the Android project and apply our patches
-        run: |
-          bash build-apk.sh
+      - name: Generate the Android project and apply patches
+        # Runs the WRAPPER's script (not a copy of it) with its default GAME_DIR=game.
+        working-directory: wrapper
+        run: bash build-apk.sh
 
       - name: Build the debug APK
-        # `game/android`, not `android`. build-apk.sh cd's into the cloned game
-        # directory to run the Capacitor CLI — the CLI resolves the project root
-        # from the working directory and has no flag to override it — so the
-        # generated project lands under `game/`. The first run of this step
-        # pointed at `android`, which does not exist, and GitHub reported it as
-        #
-        #   An error occurred trying to start process '/usr/bin/bash' with
-        #   working directory '.../android'. No such file or directory
-        #
-        # which reads like the build broke rather than like the path was wrong.
-        working-directory: game/android
-        run: |
-          # A debug build is signed with the SDK's auto-generated debug keystore,
-          # so it installs on a real device. A release build needs a signing key
-          # that must not live in a repository, which is why this does not attempt
-          # one.
-          ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: wrapper/game/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Locate the APK
         id: apk
         run: |
-          # Same `game/` prefix as the step above, for the same reason.
-          APK=$(find game/android/app/build/outputs/apk -name '*.apk' | head -1)
+          APK=$(find wrapper/game/android/app/build/outputs/apk -name '*.apk' | head -1)
           test -n "$APK" || { echo "no APK produced"; exit 1; }
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "size=$(du -h "$APK" | cut -f1)"
-          ls -la "$APK"
 
-      # An APK nobody can get hold of is not a build. The artefact is the
-      # deliverable — it is downloadable from the Actions run for 90 days, and a
-      # tagged release makes it permanent.
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
@@ -154,9 +107,10 @@ jobs:
       - name: Summary
         run: |
           {
-            echo "### APK built"
+            echo "### APK built (orchestrated)"
             echo
-            echo "- game commit: \`$(git -C game rev-parse --short HEAD)\`"
+            echo "- game commit: \`$(git -C wrapper/game rev-parse --short HEAD)\`"
+            echo "- platform: wrapper repo \`$(git -C wrapper rev-parse --short HEAD)\`"
             echo "- apk: \`${{ steps.apk.outputs.path }}\` (${{ steps.apk.outputs.size }})"
             echo
             echo "Download it from the Artifacts section of this run."

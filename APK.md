@@ -73,6 +73,15 @@ resource collisions with the template). The comments inside the workflow and
 `build-apk.sh` document each one at the spot it occurred, so the reader sees the
 trap before stepping in it.
 
+This repo deliberately carries **no** copy of `build-apk.sh`, `capacitor.config.json`
+or `android-overrides/` — they cannot run here (the overrides live only in the
+wrapper repo) and a mirrored copy only drifts. Instead this repo's
+`.github/workflows/build-apk.yml` is a **manual-only orchestrator**: it is
+`workflow_dispatch` (a button, never an auto-trigger), and it clones the wrapper
+repo, drops the game inside it as `game/`, and runs the wrapper's *own*
+`build-apk.sh`. The APK it produces is therefore built by the exact script that
+made the release builds — it cannot silently differ from them.
+
 ## What the wrapper changes in the manifest
 
 See `android-overrides/AndroidManifest.xml` (the generator's own manifest is
