@@ -30,18 +30,29 @@
  * not something the baseline should contain.
  */
 
+// pointer-events:none on the PANEL — the game keeps boots behind the overlay,
+// and a diagnostic must never become a wall the player cannot play past. The
+// buttons below opt back in with pointer-events:auto.
 const STYLE = `
   position:fixed;inset:0;z-index:2147483647;
   background:#0a0c0e;color:#e6eef2;
   font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
   padding:16px;overflow:auto;box-sizing:border-box;
   -webkit-text-size-adjust:100%;
+  pointer-events:none;user-select:text;
 `;
 const ERR_STYLE = STYLE + 'background:#140608;';
 const HEAD = 'font-weight:700;color:#ff8a6a;margin:0 0 8px;font-size:13px;';
 const OK = 'color:#7fe0a0;';
 const BAD = 'color:#ff6b6b;';
 const DIM = 'color:#8fa3ad;';
+const BTN = `
+  pointer-events:auto;cursor:pointer;user-select:none;
+  display:inline-block;margin:2px 6px 2px 0;padding:10px 16px;
+  background:rgba(255,255,255,.08);color:#e6eef2;
+  border:1px solid rgba(255,255,255,.22);border-radius:8px;
+  font:600 13px/1 system-ui,sans-serif;letter-spacing:.03em;
+`;
 
 /**
  * Features the renderer actually requires, and what breaks without each.
@@ -103,11 +114,26 @@ function probeContext() {
   return gl;
 }
 
-/** Ask GL to build a framebuffer with one colour attachment of this format. */
-function framebufferComplete(gl, internalFormat, type) {
+/**
+ * Ask GL to build a framebuffer with one colour attachment of this format.
+ *
+ * THE FORMAT ARGUMENT IS LOAD-BEARING, AND `framebufferComplete(gl, R32F,
+ * RGBA, FLOAT)` WAS A REAL BUG — the kind that blocks every device instead of
+ * none. WebGL2 only accepts the combinations in the spec's table 3.2; a sized
+ * internal format must be paired with its matching base format. R32F accepts
+ * (RED, FLOAT), RGBA32F accepts (RGBA, FLOAT), RGBA16F accepts (RGBA,
+ * HALF_FLOAT). Probing R32F with the RGBA base format is an INVALID_OPERATION:
+ * the texture is left unallocated, the attachment is empty, and the probe
+ * reports INCOMPLETE — on every device, healthy or not. Since `report.ok` is
+ * `missing.length === 0`, that one bad line made the "CANNOT RUN ON THIS
+ * DEVICE" panel appear everywhere, including the phones this feature was
+ * written to help. The game's own render targets never had this bug (three
+ * derives the sized format from the base format + type); only the probe did.
+ */
+function framebufferComplete(gl, internalFormat, format, type) {
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, 4, 4, 0, gl.RGBA, type, null);
+  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, 4, 4, 0, format, type, null);
   const fb = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(
@@ -176,17 +202,19 @@ export function diagnose() {
 
   // The real test. An extension can be present while the format is still not
   // renderable, and that combination is precisely what produces a black screen
-  // with no error. Ask GL directly.
+  // with no error. Ask GL directly. Each format is paired with the base format
+  // the spec demands for it — R32F with RED (RGBA here is invalid and always
+  // reports INCOMPLETE), the RGBA32-family with RGBA.
   if (gl.getExtension('EXT_color_buffer_float')) {
-    const r32f = framebufferComplete(gl, gl.R32F, gl.FLOAT);
-    const rgba32f = framebufferComplete(gl, gl.RGBA32F, gl.FLOAT);
+    const r32f = framebufferComplete(gl, gl.R32F, gl.RED, gl.FLOAT);
+    const rgba32f = framebufferComplete(gl, gl.RGBA32F, gl.RGBA, gl.FLOAT);
     report.info.r32f_renderable = r32f ? 'ok' : 'INCOMPLETE';
     report.info.rgba32f_renderable = rgba32f ? 'ok' : 'INCOMPLETE';
     if (!r32f) report.missing.push('R32F render target');
     if (!rgba32f) report.missing.push('RGBA32F render target');
   }
   if (gl.getExtension('EXT_color_buffer_half_float')) {
-    const rgba16f = framebufferComplete(gl, gl.RGBA16F, gl.HALF_FLOAT);
+    const rgba16f = framebufferComplete(gl, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
     report.info.rgba16f_renderable = rgba16f ? 'ok' : 'INCOMPLETE';
     if (!rgba16f) report.missing.push('RGBA16F render target');
   }
@@ -199,7 +227,7 @@ export function diagnose() {
   return report;
 }
 
-function show(html, isError) {
+function show(html, isError, copyText) {
   if (overlay) {
     overlay.innerHTML += html;
     return;
@@ -208,7 +236,71 @@ function show(html, isError) {
   overlay.id = 'ow-diagnostics';
   overlay.setAttribute('style', isError ? ERR_STYLE : STYLE);
   overlay.innerHTML = html;
+  if (copyText) overlay.appendChild(toolbar(copyText));
   document.body.appendChild(overlay);
+}
+
+/**
+ * Copy+cancel bar shared by every panel, with 44px-plus targets (the touch
+ * rule) and pointer-events:auto so taps reach it while everything else on the
+ * panel passes through to the game underneath.
+ */
+function toolbar(text) {
+  const bar = document.createElement('div');
+  bar.style.cssText = 'margin-top:14px;';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.style.cssText = BTN;
+  copy.textContent = 'COPY THE ERROR — send this to the developer';
+  copy.addEventListener('click', () => {
+    copyText(text)
+      .then(() => (copy.textContent = 'Copied ✓'))
+      .catch(() => (copy.textContent = 'Copy failed — long-press the text'));
+  });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.style.cssText = BTN + 'opacity:.85;';
+  close.textContent = '✕ close (the game is loading behind)';
+  close.addEventListener('click', () => {
+    overlay?.remove();
+    overlay = null;
+  });
+  bar.append(copy, close);
+  return bar;
+}
+
+/**
+ * Write to the clipboard. `navigator.clipboard` needs a secure context; the APK
+ * serves at https://localhost (Capacitor scheme) and the live site is https, so
+ * it is there in practice — but an old WebView still gets the textarea +
+ * execCommand fallback rather than silence.
+ */
+function copyText(text) {
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // Off-screen, but must be focusable and in the DOM for both select() and
+    // execCommand to work in old WebViews.
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;font-size:14px;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    try {
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) return Promise.resolve();
+      return Promise.reject(new Error('execCommand returned false'));
+    } catch (err) {
+      ta.remove();
+      return Promise.reject(err);
+    }
+  };
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(() => {}, fallback);
+  }
+  return fallback();
 }
 
 function esc(s) {
@@ -233,6 +325,16 @@ export function reportHtml(r, title) {
   );
 }
 
+/** Same report as plain text — what the COPY button puts on the clipboard. */
+export function reportText(r, title) {
+  const lines = [title, ''];
+  if (r.missing.length) lines.push(`Missing: ${r.missing.join(', ')}`);
+  if (r.optionalMissing.length) lines.push(`Optional missing: ${r.optionalMissing.join(', ')}`);
+  lines.push('');
+  for (const [k, v] of Object.entries(r.info)) lines.push(`${k}: ${v}`);
+  return lines.join('\n');
+}
+
 /**
  * Install global error capture. Call this FIRST, before anything that can throw.
  *
@@ -248,30 +350,37 @@ export function installErrorTrap() {
     'error',
     (e) => {
       const where = e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : '';
+      const text = `${e.message}${where}\n\n${e.error?.stack ?? ''}`;
       show(
         `<h1 style="${HEAD}">RUNTIME ERROR</h1>` +
-          `<pre style="white-space:pre-wrap;color:#ffb4a2">${esc(e.message + where)}\n\n${esc(e.error?.stack ?? '')}</pre>`,
-        true
+          `<pre style="white-space:pre-wrap;color:#ffb4a2">${esc(text)}</pre>`,
+        true,
+        text
       );
     },
     true
   );
   addEventListener('unhandledrejection', (e) => {
     const r = e.reason;
+    const text = r?.stack ?? r?.message ?? String(r);
     show(
       `<h1 style="${HEAD}">UNHANDLED REJECTION</h1>` +
-        `<pre style="white-space:pre-wrap;color:#ffb4a2">${esc(r?.stack ?? r?.message ?? String(r))}</pre>`,
-      true
+        `<pre style="white-space:pre-wrap;color:#ffb4a2">${esc(text)}</pre>`,
+      true,
+      text
     );
   });
   // A WebGL context loss is its own failure mode and produces a black screen on
   // many drivers without an error event. Listen for it, because by the time the
   // user has noticed, the context is already gone.
   addEventListener('webglcontextlost', (e) => {
+    const msg =
+      'The GPU dropped the WebGL context — usually an out-of-memory or a driver reset. Reload to try again.';
     show(
       `<h1 style="${HEAD}">WEBGL CONTEXT LOST</h1>` +
-        `<div style="color:#ffb4a2">The GPU dropped the WebGL context — usually an out-of-memory or a driver reset. Reload to try again.</div>`,
-      true
+        `<div style="color:#ffb4a2">${esc(msg)}</div>`,
+      true,
+      msg
     );
   });
 }
@@ -286,34 +395,41 @@ export function runDiagnostics(force = false) {
   try {
     r = diagnose();
   } catch (err) {
+    const text = err?.stack ?? String(err);
     show(
       `<h1 style="${HEAD}">DIAGNOSTIC FAILED</h1>` +
-        `<pre style="white-space:pre-wrap">${esc(err?.stack ?? String(err))}</pre>`,
-      true
+        `<pre style="white-space:pre-wrap">${esc(text)}</pre>`,
+      true,
+      text
     );
     return null;
   }
-  if (force || !r.ok) {
-    show(
-      reportHtml(r, r.ok ? 'DIAGNOSTICS — all required GL features present' : 'DIAGNOSTICS — INSUFFICIENT WEBGL SUPPORT'),
-      !r.ok
-    );
-  }
+  const title = r.ok ? 'DIAGNOSTICS — all required GL features present' : 'DIAGNOSTICS — INSUFFICIENT WEBGL SUPPORT';
+  let html = reportHtml(r, title);
+  let text = reportText(r, title);
   // Surface the cause to the player when the GPU genuinely cannot run this.
   if (!r.ok) {
-    const detail = REQUIREMENTS.filter((q) => r.missing.includes(q.name))
+    const broken = REQUIREMENTS.filter((q) => r.missing.includes(q.name));
+    const htmlDetail = broken
       .map((q) => `<div style="margin:4px 0"><b>${esc(q.name)}</b><br><span style="${DIM}">${esc(q.why)}</span></div>`)
       .join('');
-    show(
+    html +=
       `<h1 style="${HEAD}">CANNOT RUN ON THIS DEVICE</h1>` +
-        `<div style="margin-bottom:8px">This build needs float render targets, which this GPU or browser cannot provide. ` +
-        `A desktop browser with hardware acceleration enabled will run it.</div>` +
-        detail,
-      true
-    );
+      `<div style="margin-bottom:8px">This build needs float render targets, which this GPU or browser cannot provide. ` +
+      `A desktop browser with hardware acceleration enabled will run it.</div>` +
+      htmlDetail;
+    text +=
+      `\n\nCANNOT RUN ON THIS DEVICE\n` +
+      `This build needs float render targets, which this GPU or browser cannot provide. ` +
+      `A desktop browser with hardware acceleration enabled will run it.\n\n` +
+      broken.map((q) => `${q.name}\n${q.why}`).join('\n\n');
     console.error('[diagnostics] unsupported GL:', r);
   } else {
     console.info('[diagnostics] GL capabilities ok:', r.info);
   }
+  // One panel, one COPY THE ERROR button carrying the whole report as text.
+  // Only shown when forced (`?debug=1`) or when something is genuinely
+  // missing — a healthy device must boot with no panel at all.
+  if (force || !r.ok) show(html, !r.ok, text);
   return r;
 }

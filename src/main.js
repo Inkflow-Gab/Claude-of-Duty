@@ -58,9 +58,12 @@ installErrorTrap();
 if (!capture) {
   const diag = runDiagnostics(params.get('debug') === '1');
   if (diag && !diag.ok) {
-    // Do not start a frame loop that can only produce black. The overlay already
-    // explains why; carrying on would only burn the battery.
-    console.error('[boot] halted: insufficient WebGL support');
+    // The panel is NOT a wall. It is appended with pointer-events:none and a
+    // copy+dismiss toolbar, so the game boots and stays reachable behind it —
+    // a genuinely-broken device gets black frames, but the panel explains why
+    // and lets the player copy the report, and a device whose only problem was
+    // the old R32F probe bug (see diagnostics.js) never sees a panel at all.
+    console.error('[boot] warning: diagnostics report missing GL features');
   }
 }
 
