@@ -325,15 +325,34 @@ export class WeaponSystem {
    */
   prewarmMaterials(ctx = this.ctx) {
     const t0 = performance.now();
+    /**
+     * The EQUIPPED skin only. Warming all of them was the single largest
+     * avoidable cost in the boot path: a remapped material is a different bake,
+     * not just a different program, so the old all-skins loop generated and
+     * uploaded 1024x1024 texture sets for every variant of every part on every
+     * weapon — for skins the player may never pick. The rest are warmed by
+     * `prewarmAllSkins`, which the settings menu calls when it opens.
+     */
     const result = this.viewmodel.prewarmMaterials(ctx);
     if (result?.ok) {
       const n = Object.values(result.materials).reduce((a, b) => a + b, 0);
       console.info(
-        `[weapons] prewarmed ${n} skin material slots across ${SKIN_IDS.length} skins ` +
-          `in ${(performance.now() - t0).toFixed(0)}ms`
+        `[weapons] prewarmed ${n} material slots for skin "${this.skin}" ` +
+          `in ${(performance.now() - t0).toFixed(0)}ms ` +
+          `(${SKIN_IDS.length - 1} other skins deferred to the menu)`
       );
     }
     return result;
+  }
+
+  /**
+   * Warm every remaining skin. Called by the settings menu on open, NOT at boot.
+   *
+   * Exposed on the system rather than reached through the viewmodel so `ui` has
+   * one call site and no knowledge of the viewmodel's internals.
+   */
+  prewarmAllSkins() {
+    return this.viewmodel.prewarmAllSkins(this.ctx);
   }
 
   /* ====================================================================== */

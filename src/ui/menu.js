@@ -375,6 +375,24 @@ export class PauseMenu {
     this.open = true;
     this.syncFromConfig();
     setStyle(this.root, 'display', '');
+    /**
+     * Warm the remaining weapon finishes now, while the player is reading a menu.
+     *
+     * This is the whole point of deferring them out of boot: by the time anyone
+     * taps a finish, its materials are baked and its programs compiled, so the
+     * swap is instant. Here, a few hundred ms of background work is invisible —
+     * there is already a full-screen panel up.
+     *
+     * Fire-and-forget, and guarded twice: the menu must open even if warming
+     * fails or does not exist, and the promise must not reject unhandled.
+     */
+    if (this._weapons?.prewarmAllSkins && !this._skinsWarmed) {
+      this._skinsWarmed = true;
+      Promise.resolve(this._weapons.prewarmAllSkins()).catch((err) => {
+        this._skinsWarmed = false;
+        console.warn('[ui] skin pre-warm failed', err);
+      });
+    }
     document.exitPointerLock?.();
     const t = this.ctx.time;
     if (t) {

@@ -702,42 +702,64 @@ export class Viewmodel {
   }
 
   /**
-   * Compile every material any skin of this weapon can produce.
+   * Compile the materials the CURRENT skin can produce.
    *
    * Same contract as the `prewarmMaterials()` hook the other subsystems
    * implement (see ARCHITECTURE.md): build and compile, without drawing a
    * gameplay frame, spawning anything or touching the clock or RNG. It exists
-   * because a skin swap assigns a material that has never been drawn, and three
-   * compiles on first use — a multi-hundred-millisecond stall on the first shot
-   * after the player changes skin.
+   * because three compiles a program on first use, and a first-use compile on a
+   * phone is a visible freeze.
+   *
+   * ────────────────────────────────────────────────────────────────────────────
+   * WHY THIS ONLY COVERS ONE SKIN — and this was a real bug
+   *
+   * This used to loop over every skin in the table. That looks thorough and is
+   * catastrophically expensive: a skin is a MATERIAL REMAP, and a remapped
+   * material is a different key, which means a different set of baked procedural
+   * textures. So "warm every skin" did not mean "compile 20 more programs" — it
+   * meant *generate and upload* 1024x1024 albedo/ORM/normal triples for every
+   * variant of every part on every weapon, at boot, for skins the player may
+   * never select. On a desktop that is wasteful; on a phone, where the whole
+   * level is already several seconds of procedural work, it was the single
+   * largest avoidable cost in the boot path.
+   *
+   * So: the ACTIVE skin only, here. The rest are warmed by `prewarmAllSkins`,
+   * which the settings menu calls when it opens — by which point the player is
+   * reading a menu and a few hundred milliseconds of compilation is invisible,
+   * and the skin they pick is already warm.
    *
    * The original skin is restored in a `finally`, since the remap table is global
-   * state on `mats` and leaving it pointed at another skin would silently change
-   * what the next `mats.get` returns.
+   * state on `mats` and leaving it pointed elsewhere would silently change what
+   * the next `mats.get` returns.
    */
-  prewarmMaterials(ctx = this.ctx) {
+  prewarmMaterials(ctx = this.ctx, { skinId = null } = {}) {
     const r = ctx?.peek?.('render') ?? this._renderSys;
     const renderer = r?.renderer;
     const results = {};
     const original = this.mats.skinMats;
     if (!renderer) return { ok: false, reason: 'no renderer' };
     try {
-      for (const skin of Object.values(SKINS)) {
-        const table = skin.mats && Object.keys(skin.mats).length ? skin.mats : null;
-        this.mats.setSkin(table);
-        // Resolve (and therefore build + register) every variant. Compilation
-        // happens below, once, over the patched scene — compiling per material
-        // would not see render's `onBeforeCompile` injection.
-        this.applySkinAll();
-        results[skin.id] = this.roots.reduce((n, g) => n + countMeshes(g), 0);
-      }
+      // One skin. `skinId` lets the menu warm a specific one; default is the
+      // equipped skin, which is the only one whose cost is unavoidable.
+      const skin = skinId ? SKINS[skinId] : null;
+      const table = skin
+        ? skin.mats && Object.keys(skin.mats).length
+          ? skin.mats
+          : null
+        : original;
+      this.mats.setSkin(table);
+      // Resolve (and therefore build + register) every material. Compilation
+      // happens below, once, over the patched scene — compiling per material
+      // would not see render's `onBeforeCompile` injection.
+      this.applySkinAll();
+      const n = this.roots.reduce((c, g) => c + countMeshes(g), 0);
+      results[skin ? skin.id : 'active'] = n;
       /**
        * Compile through the scene graph rather than per material: `compileAsync`
        * walks everything reachable and this is the only path that also honours
        * render's `onBeforeCompile` patch, which is applied to materials as they
        * are first seen. Compiling an unpatched material wastes the program.
-       */
-      /**
+       *
        * Compile the VIEW scene, not the world scene. The viewmodel lives in
        * `ctx.viewScene` and is drawn with its own camera and near plane; the
        * world scene contains none of these materials. `compileAsync` walks
@@ -759,6 +781,29 @@ export class Viewmodel {
       this.mats.setSkin(original);
     }
     return { ok: true, materials: results };
+  }
+
+  /**
+   * Warm EVERY remaining skin. Deliberately not called from the boot path — see
+   * the note on `prewarmMaterials`. Invoked by the settings menu on open, so by
+   * the time the player taps a finish it is already compiled and baked.
+   *
+   * Yields between skins so a slow device can paint the menu between them. A
+   * tight loop of 1024x1024 bakes would otherwise freeze the tab for the whole
+   * set and the menu would appear to hang on open.
+   */
+  async prewarmAllSkins(ctx = this.ctx) {
+    const r = ctx?.peek?.('render');
+    if (!r?.renderer) return { ok: false, reason: 'no renderer' };
+    const done = [];
+    for (const skin of Object.values(SKINS)) {
+      this.prewarmMaterials(ctx, { skinId: skin.id });
+      done.push(skin.id);
+      // One frame of slack per skin. Enough for the compositor to show the menu
+      // and for any queued GC to run.
+      await new Promise((res) => requestAnimationFrame(() => res()));
+    }
+    return { ok: true, skins: done };
   }
 
   get clipPlaying() {

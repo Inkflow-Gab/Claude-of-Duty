@@ -725,6 +725,77 @@ section('Subsystem init order');
   }
 }
 
+/* ------------------------------------------------- boot cost regressions -- */
+section('Boot cost');
+
+{
+  /**
+   * The skin pre-warm regression.
+   *
+   * `Viewmodel.prewarmMaterials` used to loop over EVERY skin. A skin is a
+   * material remap, and a remapped material is a different key — which means a
+   * different set of BAKED procedural textures, not merely a different program.
+   * So the loop was generating and uploading 1024x1024 albedo/ORM/normal triples
+   * for every variant of every part on every weapon, at boot, for skins the
+   * player may never select. That was the largest avoidable cost in the boot
+   * path and it is invisible to every other check here.
+   *
+   * The guard is the obvious one: the boot hook must not iterate the skin table.
+   * The other skins are warmed by `prewarmAllSkins`, which the MENU calls.
+   */
+  const { WEAPONS_SRC, VIEWMODEL_SRC, MENU_SRC } = await import('./__probe_sources.mjs');
+  // The loop and the yields live in the viewmodel; weapons/index.js only
+  // delegates. Asserting against the wrong file is how a guard silently stops
+  // guarding anything.
+  const prewarmBody = VIEWMODEL_SRC.slice(
+    VIEWMODEL_SRC.indexOf('prewarmMaterials(ctx'),
+    VIEWMODEL_SRC.indexOf('prewarmAllSkins(')
+  );
+  ok(prewarmBody.length > 0, 'the viewmodel prewarm hook was found');
+  ok(!/for\s*\(\s*const\s+\w+\s+of\s+Object\.values\(SKINS\)/.test(prewarmBody),
+    'the BOOT prewarm does not loop over every skin');
+  ok(/prewarmMaterials\(ctx = this\.ctx, \{ skinId = null \}/.test(prewarmBody),
+    'one skin per call, chosen by id');
+  // The escape hatch that makes the deferral sound must actually exist, and the
+  // subsystem must expose it so `ui` has a single call site.
+  ok(/prewarmAllSkins\(/.test(VIEWMODEL_SRC), 'prewarmAllSkins exists for the deferred path');
+  ok(/prewarmAllSkins\(\)/.test(WEAPONS_SRC), 'WeaponSystem exposes prewarmAllSkins to the menu');
+  const allSkins = VIEWMODEL_SRC.slice(VIEWMODEL_SRC.indexOf('async prewarmAllSkins('));
+  ok(/await new Promise/.test(allSkins), 'prewarmAllSkins yields between skins so the tab can paint');
+  ok(/Object\.values\(SKINS\)/.test(allSkins), 'and it is that deferred path which walks the table');
+  // And the menu must be what calls it, or the deferral buys nothing.
+  ok(MENU_SRC.includes('prewarmAllSkins'), 'the settings menu warms the remaining skins on open');
+  ok(/if \(this\.open\) return;/.test(MENU_SRC), 'menu.show() is idempotent, so the warm fires once');
+  ok(MENU_SRC.includes('this._skinsWarmed'), 'the warm is latched, not repeated every open');
+}
+
+{
+  // The progress overlay must never exist in a capture, or it is a diff in the
+  // pixel gate. It also must be REMOVED, not just hidden: a full-screen
+  // position:fixed leftover swallows taps, which on a touch device is an
+  // invisible dead zone over the canvas.
+  const { MAIN_SRC } = await import('./__probe_sources.mjs');
+  ok(/const boot = capture \? null : new BootProgress\(\)/.test(MAIN_SRC),
+    'the boot overlay is nulled in capture mode');
+  ok(MAIN_SRC.includes('boot?.dispose()'), 'a failed boot tears the overlay down');
+  const bootSrc = readFileSync(join(here, 'core', 'boot.js'), 'utf8');
+  ok(bootSrc.includes('el.remove()'), 'the overlay is removed from the DOM, not just hidden');
+  ok(bootSrc.includes("pointerEvents = 'none'"), 'and is made click-through while fading');
+  // It must be dismissed on the frame handshake, not right after engine.start(),
+  // or it exposes a black canvas for one frame.
+  ok(/BOOT_FRAMES[\s\S]{0,400}boot\?\.finish\(\)/.test(MAIN_SRC),
+    'the overlay is dismissed only after a frame has landed');
+}
+
+{
+  // Subsystem init is wrapped for progress, so each step must yield a frame or
+  // the bar cannot paint and jumps 0 -> 100 in one step.
+  const { MAIN_SRC } = await import('./__probe_sources.mjs');
+  const wrap = MAIN_SRC.slice(MAIN_SRC.indexOf('sys.init = async'), MAIN_SRC.indexOf('try {\n  await engine.init()'));
+  ok(wrap.includes('requestAnimationFrame'), 'each subsystem init yields a frame so progress paints');
+  ok(wrap.includes('boot.set('), 'and reports its own step');
+}
+
 /* ------------------------------------------------------------------ done -- */
 console.log(`\n${failures === 0 ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m'} ${checks - failures}/${checks} checks`);
 process.exitCode = failures === 0 ? 0 : 1;

@@ -42,4 +42,11 @@ export const SETTINGS_SRC = read('core/settings.js');
 export const SKINS_SRC = read('weapons/skins.js');
 export const SKINFX_SRC = read('weapons/skinfx.js');
 export const WEAPONS_SRC = read('weapons/index.js');
+/**
+ * The viewmodel is where the skin machinery actually lives. `weapons/index.js`
+ * is a thin delegator for both prewarm entry points, so assertions about the
+ * loop and the yields must be made against THIS file, not that one.
+ */
+export const VIEWMODEL_SRC = read('weapons/viewmodel.js');
 export const CONFIG_SRC = read('core/config.js');
+export const MAIN_SRC = read('main.js');

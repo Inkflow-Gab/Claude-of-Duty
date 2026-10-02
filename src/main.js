@@ -18,6 +18,7 @@ import { prewarm } from './core/prewarm.js';
 import { Settings } from './core/settings.js';
 import { GAME_TITLE, GAME_SUBTITLE } from './core/config.js';
 import { installErrorTrap, runDiagnostics } from './core/diagnostics.js';
+import { BootProgress } from './core/boot.js';
 
 const params = new URLSearchParams(location.search);
 const capture = params.get('capture') === '1';
@@ -239,10 +240,83 @@ engine
   .add(UiSystem)
   .add(AudioSystem);
 
+/**
+ * Per-subsystem boot progress.
+ *
+ * The engine initialises subsystems in one sequential loop, so without this the
+ * player sees a single undifferentiated wait for what is really four distinct,
+ * very differently-priced stages. Each system's `init` is wrapped rather than the
+ * loop being instrumented, so `core/engine.js` needs no knowledge of a progress
+ * bar and the capture path is untouched.
+ *
+ * The weights are COST, measured from the `[engine] <id> init NNNms` log lines the
+ * engine already prints, not a guess from ordering. The two that dominate —
+ * `materials` (baking 19 surfaces at up to 1024²) and `world` (building ~11.3 M
+ * triangles of procedural geometry and the static BVH) — get most of the bar,
+ * which is what stops it sitting at 5% through the actual wait.
+ *
+ * The wrappers are installed only outside capture. They are pure pass-throughs
+ * either way, but there is no reason to touch a subsystem's identity in a run
+ * whose whole job is to be reproducible.
+ */
+const boot = capture ? null : new BootProgress();
+if (boot) {
+  /**
+   * Relative cost per subsystem, keyed by id. Missing ids default to a small
+   * value so a newly added subsystem still advances the bar rather than
+   * silently freezing it.
+   */
+  const WEIGHT = {
+    materials: 0.3,
+    world: 0.32,
+    render: 0.14,
+    ai: 0.1,
+    weapons: 0.07,
+    sky: 0.03,
+    physics: 0.02,
+    player: 0.015,
+    fx: 0.015,
+    ui: 0.005,
+    audio: 0.005,
+  };
+  const LABEL = {
+    materials: 'forging materials',
+    world: 'building the city',
+    render: 'starting the renderer',
+    ai: 'posting the garrison',
+    weapons: 'assembling weapons',
+    sky: 'lighting the sky',
+    physics: 'building collision',
+    player: 'waking the player',
+    fx: 'priming effects',
+    ui: 'building the hud',
+    audio: 'tuning audio',
+  };
+  // One extra step for the prewarm pass that follows init.
+  const ids = engine.registry.resolve().map((s) => s.constructor.id);
+  boot.configure([...(ids.map((id) => WEIGHT[id] ?? 0.01)), 0.2]);
+  let step = 0;
+  for (const sys of engine.registry.ordered) {
+    const id = sys.constructor.id;
+    const orig = sys.init?.bind(sys);
+    if (!orig) continue;
+    sys.init = async (ctx) => {
+      boot.set(step++, LABEL[id] ?? id);
+      // Yield a frame between systems so the bar actually PAINTS. A subsystem
+      // init is one long synchronous block; without a yield the browser cannot
+      // render the DOM update until the whole loop finishes, and the bar would
+      // jump from 0% to 100% regardless of how many steps there were.
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      return orig(ctx);
+    };
+  }
+}
+
 try {
   await engine.init();
 } catch (err) {
   console.error('[boot] init failed', err);
+  boot?.dispose();
   // Routed through the error trap as well as the inline <pre>, so a failure here
   // and a failure inside the frame loop report identically. The inline handler
   // predates the trap and is kept because it runs before the trap's own DOM
@@ -272,11 +346,31 @@ const shotApi = installShotApi(engine, { capture, lockstep });
 // lockstep in src/dev/shots.js; (2) `will-change: transform` on the compass strip
 // cached a composited-layer raster taken at a wall-clock-dependent moment — fixed
 // in src/ui/style.js.
+/**
+ * The pre-warm pass, and the last boot step.
+ *
+ * This is the single slowest phase on a phone: it compiles every shader
+ * permutation the game can produce, and a mobile driver is an order of magnitude
+ * slower at that than a desktop one. That cost is unavoidable and the work has
+ * to happen — it is exactly what stops multi-second stalls mid-fight — so the only
+ * thing to be done about it is to be honest while it happens.
+ */
+boot?.set(boot._weights.length - 1, 'compiling shaders');
 const warmup = params.get('prewarm') === '0' ? { ok: false, reason: 'disabled by ?prewarm=0' } : await prewarm(engine);
 console.info('[boot] prewarm', warmup);
 window.__PREWARM__ = warmup;
 
 engine.start();
+
+/**
+ * Dismiss the progress bar only once a real frame has landed.
+ *
+ * Not immediately after `engine.start()`: the first frame is what makes the
+ * canvas non-empty, and fading the overlay out before that would expose a black
+ * canvas for a frame — the exact thing the overlay exists to prevent. Cleared
+ * alongside the ready handshake below, which is already frame-counted.
+ */
+boot?.set(boot._weights.length - 1, 'ready');
 
 // Capture harness handshake: only flag ready once a frame has actually landed.
 //
@@ -288,11 +382,15 @@ const BOOT_FRAMES = 3;
 if (lockstep) {
   await shotApi.pump(BOOT_FRAMES);
   window.__READY__ = true;
+  boot?.finish();
 } else {
   let warm = 0;
   const readyProbe = () => {
     if (++warm >= BOOT_FRAMES) {
       window.__READY__ = true;
+      // Same reason as the lockstep branch: the overlay only goes once a frame
+      // has actually been presented, so the player never sees the bare canvas.
+      boot?.finish();
       return;
     }
     requestAnimationFrame(readyProbe);
