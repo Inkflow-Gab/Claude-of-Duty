@@ -17,6 +17,7 @@ import { installShotApi } from './dev/shots.js';
 import { prewarm } from './core/prewarm.js';
 import { Settings } from './core/settings.js';
 import { GAME_TITLE, GAME_SUBTITLE } from './core/config.js';
+import { installErrorTrap, runDiagnostics } from './core/diagnostics.js';
 
 const params = new URLSearchParams(location.search);
 const capture = params.get('capture') === '1';
@@ -25,6 +26,42 @@ const capture = params.get('capture') === '1';
 // because tools that measure real frame pacing (tools/perf.mjs) need the loop to
 // free-run. See the long comment in src/dev/shots.js.
 const lockstep = capture && params.get('lockstep') === '1';
+
+/**
+ * Error trap, installed before anything that can throw.
+ *
+ * MUST come first, and MUST run in capture mode too. The trap itself draws
+ * nothing — it only appends to a DOM node if something actually goes wrong — so
+ * it cannot move a pixel, and a failed capture that silently produced 11 black
+ * frames would be far worse than a stray overlay. `runDiagnostics` below is the
+ * part that draws, and that one IS skipped in capture.
+ */
+installErrorTrap();
+
+/**
+ * Capability check, and the first thing that draws anything.
+ *
+ * The reason this exists: a WebGL game that cannot render fails SILENTLY. An
+ * unsupported render-target format does not throw — the framebuffer comes back
+ * incomplete, the draw is dropped, and the result is a black rectangle with an
+ * empty console. On a desktop that is a shrug; on a phone, with no devtools, it
+ * is indistinguishable from "the site is broken".
+ *
+ * So the GL features the pipeline depends on are probed up front, and a device
+ * that cannot provide them is told so in plain language instead of being shown
+ * a black screen. `?debug=1` forces the report on even when everything passed.
+ *
+ * The probe allocates and discards a throwaway context before the game makes its
+ * own, because mobile browsers cap how many can be live at once.
+ */
+if (!capture) {
+  const diag = runDiagnostics(params.get('debug') === '1');
+  if (diag && !diag.ok) {
+    // Do not start a frame loop that can only produce black. The overlay already
+    // explains why; carrying on would only burn the battery.
+    console.error('[boot] halted: insufficient WebGL support');
+  }
+}
 
 const config = createConfig({
   // `undefined` (no `?q=`) is meaningful: it asks createConfig to auto-tier from
@@ -206,6 +243,10 @@ try {
   await engine.init();
 } catch (err) {
   console.error('[boot] init failed', err);
+  // Routed through the error trap as well as the inline <pre>, so a failure here
+  // and a failure inside the frame loop report identically. The inline handler
+  // predates the trap and is kept because it runs before the trap's own DOM
+  // insertion can be relied on during a very early failure.
   document.body.insertAdjacentHTML(
     'beforeend',
     `<pre style="position:fixed;inset:0;padding:2rem;color:#f66;background:#000;
